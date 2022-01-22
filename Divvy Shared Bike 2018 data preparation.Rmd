@@ -1,0 +1,207 @@
+---
+title: "Divvy Shared Bike 2018 data preparation"
+author: "Pornsinee Pongpetrarat"
+date: "1/20/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### About the data
+This dataset is provided by Divvy Shared Bikes company from Chicago and their stations geographic coordinate are from Chicago Data Portal
+
+### Data Preparation
+
+We had 2 datasets:
+
+1. 2018 Divvy Dataset : this dataset has everything except for geographic coordinate, which is important to create map in Tableau later on
+2. Divvy stations geographic coordinate dataset : this dataset has stations’ geographic coordinate, we will join this dataset to Divvy Dataset
+
+install necessary packages then load library
+```{r}
+library(tidyverse)
+library(geosphere)
+```
+
+
+Import 2018 Divvy dataset and Divvy stations geographic coordinate dataset
+```{r}
+ temp = list.files(pattern="Divvy_Trips_2018.*.csv", recursive = TRUE)
+ Divvy_12_months <- lapply(temp, read.csv) %>%
+  bind_rows()
+ 
+ Station_position <- read.csv("Divvy_Bicycle_Stations_-_In_Service.csv") 
+```
+
+
+check for duplicate
+
+if sum = 0 then no duplicate. This is because in logical data type, TRUE = 1 and FALSE = 0
+```{r}
+duplicated(Divvy_12_months$trip_id)%>%
+  sum()
+duplicated(Station_position$Station.Name)%>%
+  sum()
+```
+
+
+check for NA
+
+if sum = 0 then no NA
+```{r}
+duplicated(Divvy_12_months$trip_id)%>%
+  sum()
+duplicated(Station_position$Station.Name)%>%
+  sum()
+```
+
+
+add age column
+```{r}
+Divvy_12_months <- Divvy_12_months%>%
+  mutate(age = 2018 - birthyear)
+```
+
+
+change trip duration data type from chr–>num and add trip duration(minute) column
+```{r}
+Divvy_12_months$tripduration <- gsub(",", "", Divvy_12_months$tripduration)
+Divvy_12_months$tripduration <- as.numeric(Divvy_12_months$tripduration)
+Divvy_12_months <- Divvy_12_months%>%
+  mutate(tripduration_min = round(tripduration/60))
+```
+
+
+add latitude, longitude
+
+In this part, I select columns from Divvy dataset to create new lists so I cฟื do trial and error as many times as I want without affecting Divvy_12_month, so I didn’t have to reload Divvy dataset everytime I messed up.
+
+first, create 3 new lists
+
+1. 2 lists contain station name and station id of start stations(from station) while the other of end stations(to station) from Divvy_12_months
+2. 1 list contains station id, latitude, longitude from Station_position
+note: from station = start station and to station = end station
+
+create 3 lists
+```{r}
+select_from_station_name <- Divvy_12_months %>%
+  select(from_station_name,from_station_id)
+select_to_station_name <- Divvy_12_months %>%
+  select(to_station_name, to_station_id)
+select_station_position <- Station_position%>%
+  select(ID, Latitude, Longitude)
+```
+
+
+left join stations geo coordinate to start station and end station
+```{r}
+select_from_station_name <- select_from_station_name%>%
+  left_join(select_station_position , by= c('from_station_id' = 'ID'))
+select_to_station_name <- select_to_station_name%>%
+  left_join(select_station_position , by= c('to_station_id' = 'ID'))
+```
+
+
+check for NA
+```{r}
+lapply(lapply(select_from_station_name, is.na), sum)
+lapply(lapply(select_to_station_name, is.na), sum)
+```
+there are 146,795 of NA rows in latitude and longitude columns from start station list
+
+there are 156,632 of NA rows in latitude and longitude columns from end station list
+
+
+check for blank string in station names columns
+```{r}
+select_from_station_name%>%
+  filter(from_station_name == "")
+select_to_station_name%>%
+  filter(to_station_name == "")
+```
+
+
+Check for impact if I decide to drop NA rows in latitude or longitude columns
+
+first, combind columns together
+```{r}
+from_to_station_latlng <- cbind(select_from_station_name,select_to_station_name)
+colnames(from_to_station_latlng)[3] <- "from_Latitude"
+colnames(from_to_station_latlng)[4] <- "from_Longitude"
+colnames(from_to_station_latlng)[7] <- "to_Latitude"
+colnames(from_to_station_latlng)[8] <- "to_Longitude"
+```
+
+
+count for all NA rows I have to drop
+```{r}
+from_to_station_latlng%>%
+  filter(is.na(from_Latitude) == TRUE | is.na(from_Longitude) == TRUE |
+           is.na(to_Latitude) == TRUE | is.na(to_Longitude) == TRUE) %>%
+  count()
+```
+
+
+If we decided to drop rows with NA in latitude or longitude column we will have to drop 293,131 rows of data. 
+
+I decided to drop those NA rows.
+
+combind start and end station latitude, longitude columns to main Divvy_12_months
+```{r}
+Divvy_12_months <- cbind(Divvy_12_months, from_Latitude = from_to_station_latlng[,3])
+Divvy_12_months <- cbind(Divvy_12_months, from_Logitude = from_to_station_latlng[,4])
+Divvy_12_months <- cbind(Divvy_12_months, to_Latitude = from_to_station_latlng[,7])
+Divvy_12_months <- cbind(Divvy_12_months, to_Logitude = from_to_station_latlng[,8])
+```
+
+
+drop the NA rows
+```{r}
+Divvy_12_months_no_NA_latlng <- Divvy_12_months[complete.cases(Divvy_12_months[,15:18]),]
+```
+
+
+check if we really delete 293,131 rows
+```{r}
+nrow(Divvy_12_months)-nrow(Divvy_12_months_no_NA_latlng)
+```
+
+
+check for NA in latitude, longitude columns
+```{r}
+sum(is.na(Divvy_12_months_no_NA_latlng[,15:18]))
+```
+
+
+check for negative trip duration
+```{r}
+Divvy_12_months_no_NA_latlng%>%
+  filter(tripduration_min < 0)
+```
+
+
+check for more than 24 hour trip
+```{r}
+Divvy_12_months_no_NA_latlng%>%
+  filter(tripduration_min> 24*60)%>%
+  count()
+```
+there were 1301 rows
+
+filter out those 1301 rows
+```{r}
+Divvy_12_months_clean <- Divvy_12_months_no_NA_latlng%>%
+  filter(tripduration_min <= 24*60)
+```
+
+
+write csv file for Tableau
+```{r}
+Divvy_12_months_clean %>%
+  write.csv("Divvy2018_with_latlng.csv")
+```
+
+
+
